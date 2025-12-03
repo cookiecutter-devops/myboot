@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 
-def def get_project_root() -> str:
+def get_project_root() -> str:
     """
     获取项目根目录
     
