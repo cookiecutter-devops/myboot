@@ -86,7 +86,7 @@ class AutoConfigurationManager:
             self.auto_configured = True
             
         except Exception as e:
-            logger.error(f"自动发现失败: {e}")
+            logger.error(f"自动发现失败: {e}", exc_info=True)
     
     def _scan_package(self, package_path: Path, package_name: str) -> None:
         """递归扫描包"""
@@ -113,7 +113,7 @@ class AutoConfigurationManager:
                     self._check_class(obj, module_name)
                     
         except Exception as e:
-            logger.debug(f"扫描模块 {module_name} 失败: {e}")
+            logger.error(f"扫描模块 {module_name} 失败: {e}", exc_info=True)
     
     def _check_function(self, func: Callable, module_name: str) -> None:
         """检查函数是否是装饰的组件"""
@@ -190,15 +190,14 @@ class AutoConfigurationManager:
         
         logger.debug("开始应用自动配置...")
         
-        # 自动注册各种组件
-        # 注意：服务注册需要在任务注册之前，以便任务可以使用依赖注入的服务
-        self._auto_register_rest_controllers(app)
+       
         self._auto_register_routes(app)
         self._auto_register_services(app)  # 先注册服务，支持依赖注入
         self._auto_register_models(app)
         self._auto_register_clients(app)
         self._auto_register_jobs(app)  # 再注册任务，可以使用已注册的服务
         self._auto_register_middleware(app)
+        self._auto_register_rest_controllers(app)
         
         logger.debug("自动配置应用完成")
     
@@ -216,8 +215,12 @@ class AutoConfigurationManager:
                 base_path = controller_config['base_path']
                 base_kwargs = controller_config.get('kwargs', {})
                 
-                # 创建控制器实例
-                instance = cls()
+                # 创建控制器实例（支持依赖注入）
+                try:
+                    instance = self._get_class_instance(cls, app)
+                except Exception as e:
+                    logger.error(f"创建控制器实例失败 {cls.__name__}: {e}", exc_info=True)
+                    continue
                 
                 # 检查类中的所有方法，只处理显式使用路由装饰器的方法
                 for method_name, method in inspect_module.getmembers(
@@ -256,7 +259,7 @@ class AutoConfigurationManager:
                 
                 logger.info(f"自动注册 REST 控制器: {controller_info['module']}.{cls.__name__}")
             except Exception as e:
-                logger.error(f"自动注册 REST 控制器失败 {controller_info['module']}: {e}")
+                logger.error(f"自动注册 REST 控制器失败 {controller_info['module']}: {e}", exc_info=True)
     
     def _auto_register_routes(self, app) -> None:
         """自动注册路由"""
@@ -290,7 +293,7 @@ class AutoConfigurationManager:
                 
                 logger.debug(f"自动注册路由: {route_info['module']}.{route_info['function'].__name__}")
             except Exception as e:
-                logger.error(f"自动注册路由失败 {route_info['module']}: {e}")
+                logger.error(f"自动注册路由失败 {route_info['module']}: {e}", exc_info=True)
     
     def _is_job_enabled(self, _func, job_config: dict) -> bool:
         """
@@ -320,8 +323,7 @@ class AutoConfigurationManager:
         """
         获取类实例，支持依赖注入
         
-        如果类有 @service 装饰器，尝试从 DI 容器或 app.services 获取实例
-        否则直接实例化
+        只从 di_container 获取依赖，找不到直接报错，不尝试初始化
         
         Args:
             cls: 类
@@ -329,34 +331,66 @@ class AutoConfigurationManager:
             
         Returns:
             类实例
+            
+        Raises:
+            RuntimeError: 如果 di_container 不存在或依赖注入失败
+            KeyError: 如果必需依赖未在 DI 容器中注册
         """
+        # 检查 di_container 是否存在
+        if not hasattr(app, 'di_container'):
+            raise RuntimeError(f"无法实例化 {cls.__name__}：应用未配置依赖注入容器")
+        
+        di_container = app.di_container
+        
         # 检查类是否有 @service 装饰器
         if hasattr(cls, '__myboot_service__'):
             service_config = getattr(cls, '__myboot_service__')
             service_name = service_config.get('name', _camel_to_snake(cls.__name__))
-            
-            # 方法1: 尝试从 DI 容器获取（如果容器已构建）
-            if hasattr(app, 'di_container'):
-                di_container = app.di_container
-                try:
-                    if di_container.has_service(service_name):
-                        instance = di_container.get_service(service_name)
-                        logger.debug(f"从 DI 容器获取服务实例: {service_name}")
-                        return instance
-                except Exception as e:
-                    logger.debug(f"从 DI 容器获取服务失败 {service_name}: {e}")
-            
-            # 方法2: 尝试从 app.services 获取（服务注册后会在那里）
-            if hasattr(app, 'services') and service_name in app.services:
-                instance = app.services[service_name]
-                logger.debug(f"从 app.services 获取服务实例: {service_name}")
-                return instance
-            
-            # 方法3: 如果都失败，尝试直接实例化（可能会有依赖注入问题）
-            logger.warning(f"服务 '{service_name}' 未在容器中注册，尝试直接实例化（可能缺少依赖注入）")
+            if di_container.has_service(service_name):
+                return di_container.get_service(service_name)
+            raise KeyError(f"服务 '{service_name}' 未在 DI 容器中注册")
         
-        # 没有 @service 装饰器或获取失败，直接实例化
-        return cls()
+        # 检查构造函数是否有依赖
+        from myboot.core.di.decorators import get_injectable_params
+        params = get_injectable_params(cls.__init__)
+        
+        if not params:
+            # 没有依赖参数，直接实例化
+            return cls()
+        
+        # 有依赖参数，从 DI 容器获取依赖
+        dependencies = {}
+        for param_name, param_info in params.items():
+            service_name = param_info.get('service_name')
+            if not service_name:
+                continue
+            
+            is_optional = param_info.get('is_optional', False)
+            
+            # 检查依赖是否存在
+            if not di_container.has_service(service_name):
+                if not is_optional:
+                    raise KeyError(
+                        f"无法实例化 {cls.__name__}："
+                        f"必需依赖 '{service_name}' (参数 '{param_name}') 未在 DI 容器中注册"
+                    )
+                continue
+            
+            # 获取依赖
+            try:
+                dependencies[param_name] = di_container.get_service(service_name)
+                logger.debug(f"从 DI 容器注入依赖: {param_name} = {service_name}")
+            except Exception as e:
+                if not is_optional:
+                    raise RuntimeError(
+                        f"无法实例化 {cls.__name__}："
+                        f"获取依赖 '{service_name}' (参数 '{param_name}') 失败: {e}"
+                    ) from e
+                logger.debug(f"获取可选依赖 '{service_name}' 失败: {e}")
+        
+        # 使用依赖实例化
+        logger.debug(f"使用依赖注入实例化 {cls.__name__}: {list(dependencies.keys())}")
+        return cls(**dependencies)
     
     def _auto_register_jobs(self, app) -> None:
         """自动注册任务"""
@@ -459,7 +493,7 @@ class AutoConfigurationManager:
                     'module': middleware_info['module']
                 })
             except Exception as e:
-                logger.error(f"解析中间件配置失败 {middleware_info['module']}: {e}")
+                logger.error(f"解析中间件配置失败 {middleware_info['module']}: {e}", exc_info=True)
         
         # 按 order 排序
         middleware_list.sort(key=lambda x: x['order'])
@@ -630,7 +664,7 @@ class AutoConfigurationManager:
                 
                 logger.info(f"自动注册模型: {model_info['module']}")
             except Exception as e:
-                logger.error(f"自动注册模型失败 {model_info['module']}: {e}")
+                logger.error(f"自动注册模型失败 {model_info['module']}: {e}", exc_info=True)
     
     def _auto_register_clients(self, app) -> None:
         """自动注册客户端"""
@@ -646,7 +680,7 @@ class AutoConfigurationManager:
                 
                 logger.info(f"自动注册客户端: '{client_name}' ({client_info['module']}.{cls.__name__})")
             except Exception as e:
-                logger.error(f"自动注册客户端失败 {client_info['module']}: {e}")
+                logger.error(f"自动注册客户端失败 {client_info['module']}: {e}", exc_info=True)
 
 
 # 全局自动配置管理器实例

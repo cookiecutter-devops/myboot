@@ -125,7 +125,7 @@ class Scheduler:
             return job_id
             
         except Exception as e:
-            self._logger.error(f"添加 Cron 任务失败: {e}")
+            self._logger.error(f"添加 Cron 任务失败: {e}", exc_info=True)
             raise
     
     def _parse_cron(self, cron_expr: str) -> CronTrigger:
@@ -205,7 +205,7 @@ class Scheduler:
             return job_id
             
         except Exception as e:
-            self._logger.error(f"添加间隔任务失败: {e}")
+            self._logger.error(f"添加间隔任务失败: {e}", exc_info=True)
             raise
     
     def add_date_job(
@@ -248,7 +248,7 @@ class Scheduler:
             return job_id
             
         except Exception as e:
-            self._logger.error(f"添加一次性任务失败: {e}")
+            self._logger.error(f"添加一次性任务失败: {e}", exc_info=True)
             raise
     
     def _parse_run_date(self, run_date: str) -> datetime:
@@ -294,7 +294,7 @@ class Scheduler:
                 return True
             return False
         except Exception as e:
-            self._logger.error(f"移除任务失败: {e}")
+            self._logger.error(f"移除任务失败: {e}", exc_info=True)
             return False
     
     def get_job(self, job_id: str) -> Optional[Any]:
@@ -330,7 +330,7 @@ class Scheduler:
                 self._scheduler.start()
                 self._logger.info(f"任务调度器已启动 (时区: {self._timezone}, 任务数: {len(self._scheduler.get_jobs())})")
             except Exception as e:
-                self._logger.error(f"启动调度器失败: {e}")
+                self._logger.error(f"启动调度器失败: {e}", exc_info=True)
                 raise
     
     def stop(self) -> None:
@@ -340,7 +340,7 @@ class Scheduler:
                 self._scheduler.shutdown(wait=True)
                 self._logger.info("任务调度器已停止")
             except Exception as e:
-                self._logger.error(f"停止调度器失败: {e}")
+                self._logger.error(f"停止调度器失败: {e}", exc_info=True)
     
     def is_running(self) -> bool:
         """检查调度器是否运行中"""

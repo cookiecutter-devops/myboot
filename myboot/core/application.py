@@ -7,7 +7,7 @@ MyBoot 应用程序主类
 import asyncio
 import signal
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,6 +17,7 @@ from loguru import logger
 
 from .auto_configuration import auto_discover, apply_auto_configuration
 from .config import get_settings
+from .container import Container
 from .logger import setup_logging
 from .scheduler import Scheduler
 from .server import ServerManager
@@ -81,6 +82,9 @@ class Application:
 
         # 客户端注册表
         self.clients: Dict[str, Any] = {}
+
+        # 统一容器接口（支持从 container、services、clients 中获取实例）
+        self.container = Container(self)
 
         # 启动钩子
         self.startup_hooks: List[Callable] = []
@@ -160,6 +164,7 @@ class Application:
         """检查是否有客户端"""
         return name in self.clients
 
+
     def route(
             self,
             path: str,
@@ -222,7 +227,7 @@ class Application:
                     else:
                         hook()
                 except Exception as e:
-                    self.logger.error(f"启动钩子执行失败: {e}")
+                    self.logger.error(f"启动钩子执行失败: {e}", exc_info=True)
 
             # 启动调度器
             if self.scheduler.has_jobs():
@@ -247,7 +252,7 @@ class Application:
                     else:
                         hook()
                 except Exception as e:
-                    self.logger.error(f"关闭钩子执行失败: {e}")
+                    self.logger.error(f"关闭钩子执行失败: {e}", exc_info=True)
 
         # 创建 FastAPI 应用
 
@@ -317,7 +322,7 @@ class Application:
         @app.exception_handler(MyBootException)
         async def myboot_exception_handler(request: Request, exc: MyBootException):
             """MyBoot 异常处理器"""
-            self.logger.error(f"MyBoot 异常: {exc}")
+            self.logger.error(f"MyBoot 异常: {exc}", exc_info=True)
             return JSONResponse(
                 status_code=500,
                 content={
@@ -508,3 +513,10 @@ def get_service(name: str):
 
 def get_client(name: str):
     return _current_app.get_client(name)
+
+
+def get_container() -> Container:
+    """获取容器实例"""
+    if _current_app is None:
+        raise RuntimeError("应用实例未初始化，请确保应用已创建并启动")
+    return _current_app.container
