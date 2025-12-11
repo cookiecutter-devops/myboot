@@ -136,11 +136,11 @@ class Scheduler:
             cron_expr: Cron 表达式字符串
             
         Returns:
-            CronTrigger 对象
+            CronTrigger 对象（使用调度器配置的时区）
         """
         # 尝试使用 CronTrigger.from_crontab 解析标准格式
         try:
-            return CronTrigger.from_crontab(cron_expr)
+            return CronTrigger.from_crontab(cron_expr, timezone=self._timezone)
         except (ValueError, TypeError):
             # 如果不是标准格式，尝试手动解析
             parts = cron_expr.split()
@@ -152,7 +152,8 @@ class Scheduler:
                     hour=hour,
                     day=day,
                     month=month,
-                    day_of_week=day_of_week
+                    day_of_week=day_of_week,
+                    timezone=self._timezone
                 )
             elif len(parts) == 6:
                 # 6位格式：秒 分 时 日 月 周（兼容旧格式）
@@ -163,7 +164,8 @@ class Scheduler:
                     hour=hour,
                     day=day,
                     month=month,
-                    day_of_week=day_of_week
+                    day_of_week=day_of_week,
+                    timezone=self._timezone
                 )
             else:
                 raise ValueError(f"无效的 Cron 表达式格式: {cron_expr}，应为5位或6位")
@@ -190,8 +192,8 @@ class Scheduler:
         job_id = job_id or f"interval_{func.__name__}"
         
         try:
-            # 创建间隔触发器
-            trigger = IntervalTrigger(seconds=interval)
+            # 创建间隔触发器（使用调度器配置的时区）
+            trigger = IntervalTrigger(seconds=interval, timezone=self._timezone)
             
             # 添加到 APScheduler
             self._scheduler.add_job(
@@ -230,11 +232,11 @@ class Scheduler:
         job_id = job_id or f"date_{func.__name__}"
         
         try:
-            # 解析日期时间（返回 naive datetime，APScheduler 会自动应用全局时区）
+            # 解析日期时间（返回 naive datetime）
             run_datetime = self._parse_run_date(run_date)
             
-            # 创建日期触发器（APScheduler 会自动处理过期任务）
-            trigger = DateTrigger(run_date=run_datetime)
+            # 创建日期触发器（使用调度器配置的时区）
+            trigger = DateTrigger(run_date=run_datetime, timezone=self._timezone)
             
             # 添加到 APScheduler
             self._scheduler.add_job(
