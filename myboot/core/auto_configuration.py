@@ -24,6 +24,15 @@ from loguru import logger as loguru_logger
 
 logger = loguru_logger.bind(name=__name__)
 
+
+class AutoConfigurationError(Exception):
+    """自动配置失败异常
+    
+    当自动注册组件失败时抛出此异常，导致应用启动失败
+    """
+    pass
+
+
 # 缓存版本号，修改扫描逻辑时递增以使旧缓存失效
 _CACHE_VERSION = "3.0"
 
@@ -394,11 +403,7 @@ class AutoConfigurationManager:
                 base_kwargs = controller_config.get('kwargs', {})
                 
                 # 创建控制器实例（支持依赖注入）
-                try:
-                    instance = self._get_class_instance(cls, app)
-                except Exception as e:
-                    logger.error(f"创建控制器实例失败 {cls.__name__}: {e}", exc_info=True)
-                    continue
+                instance = self._get_class_instance(cls, app)
                 
                 # 检查类中的所有方法，只处理显式使用路由装饰器的方法
                 for method_name, method in inspect_module.getmembers(
@@ -438,6 +443,9 @@ class AutoConfigurationManager:
                 logger.info(f"自动注册 REST 控制器: {controller_info['module']}.{cls.__name__}")
             except Exception as e:
                 logger.error(f"自动注册 REST 控制器失败 {controller_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册 REST 控制器失败 '{controller_info['module']}': {e}"
+                ) from e
     
     def _auto_register_routes(self, app) -> None:
         """自动注册路由"""
@@ -472,6 +480,9 @@ class AutoConfigurationManager:
                 logger.debug(f"自动注册路由: {route_info['module']}.{route_info['function'].__name__}")
             except Exception as e:
                 logger.error(f"自动注册路由失败 {route_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册路由失败 '{route_info['module']}': {e}"
+                ) from e
     
     def _is_job_enabled(self, _func, job_config: dict) -> bool:
         """
@@ -644,6 +655,9 @@ class AutoConfigurationManager:
                 })
             except Exception as e:
                 logger.error(f"解析中间件配置失败 {middleware_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"解析中间件配置失败 '{middleware_info['module']}': {e}"
+                ) from e
         
         # 按 order 排序
         middleware_list.sort(key=lambda x: x['order'])
@@ -690,6 +704,9 @@ class AutoConfigurationManager:
                 )
             except Exception as e:
                 logger.error(f"自动注册中间件失败 {middleware_item['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册中间件失败 '{middleware_item['module']}': {e}"
+                ) from e
         
         logger.info(f"成功注册 {len(middleware_list)} 个中间件")
     
@@ -732,10 +749,7 @@ class AutoConfigurationManager:
                 logger.info("依赖注入容器构建成功")
             except Exception as e:
                 logger.error(f"构建依赖注入容器失败: {e}", exc_info=True)
-                # 如果依赖注入失败，回退到原来的方式
-                logger.warning("回退到传统服务注册方式（无依赖注入）")
-                self._auto_register_services_fallback(app)
-                return
+                raise AutoConfigurationError(f"构建依赖注入容器失败: {e}") from e
             
             # 第三步：获取所有服务实例并注册到应用上下文
             for service_info in self.discovered_components['services']:
@@ -758,48 +772,21 @@ class AutoConfigurationManager:
                     logger.info(f"自动注册服务（依赖注入）: '{service_name}' ({service_info['module']}.{cls.__name__})")
                 except Exception as e:
                     logger.error(f"获取服务实例失败 {service_info['module']}: {e}", exc_info=True)
-                    # 如果获取失败，尝试直接实例化（无依赖注入）
-                    try:
-                        cls = service_info['class']
-                        service_config = getattr(cls, '__myboot_service__')
-                        service_name = service_config.get('name', cls.__name__.lower())
-                        instance = cls()
-                        app.services[service_name] = instance
-                        logger.warning(f"服务 '{service_name}' 使用传统方式实例化（无依赖注入）")
-                    except Exception as fallback_error:
-                        logger.error(f"服务 '{service_name}' 实例化失败: {fallback_error}", exc_info=True)
+                    raise AutoConfigurationError(
+                        f"自动注册服务失败 '{service_name}' ({service_info['module']}): {e}"
+                    ) from e
         
-        except ImportError:
-            # 如果 dependency_injector 未安装，使用传统方式
-            logger.warning("dependency_injector 未安装，使用传统服务注册方式")
-            self._auto_register_services_fallback(app)
+        except ImportError as e:
+            logger.error(f"dependency_injector 未安装: {e}", exc_info=True)
+            raise AutoConfigurationError(
+                "依赖注入需要 dependency_injector 库，请运行: pip install dependency-injector"
+            ) from e
+        except AutoConfigurationError:
+            # 重新抛出 AutoConfigurationError
+            raise
         except Exception as e:
             logger.error(f"依赖注入服务注册失败: {e}", exc_info=True)
-            # 回退到传统方式
-            self._auto_register_services_fallback(app)
-    
-    def _auto_register_services_fallback(self, app) -> None:
-        """传统服务注册方式（无依赖注入）"""
-        for service_info in self.discovered_components['services']:
-            try:
-                cls = service_info['class']
-                service_config = getattr(cls, '__myboot_service__')
-                
-                # 创建服务实例并注册到应用上下文
-                instance = cls()
-                service_name = service_config.get('name', cls.__name__.lower())
-                app.services[service_name] = instance
-                
-                # 确保当前应用实例已注册
-                from myboot.core.application import _current_app
-                if _current_app != app:
-                    # 更新当前应用实例
-                    import myboot.core.application
-                    myboot.core.application._current_app = app
-                
-                logger.info(f"自动注册服务: '{service_name}' ({service_info['module']}.{cls.__name__})")
-            except Exception as e:
-                logger.error(f"自动注册服务失败 {service_info['module']}: {e}", exc_info=True)
+            raise AutoConfigurationError(f"依赖注入服务注册失败: {e}") from e
     
     def _auto_register_models(self, app) -> None:
         """自动注册模型"""
@@ -815,6 +802,9 @@ class AutoConfigurationManager:
                 logger.info(f"自动注册模型: {model_info['module']}")
             except Exception as e:
                 logger.error(f"自动注册模型失败 {model_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册模型失败 '{model_info['module']}': {e}"
+                ) from e
     
     def _auto_register_clients(self, app) -> None:
         """自动注册客户端"""
@@ -854,6 +844,9 @@ class AutoConfigurationManager:
                 logger.info(f"自动注册客户端: '{client_name}' ({client_info['module']}.{cls.__name__})")
             except Exception as e:
                 logger.error(f"自动注册客户端失败 {client_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册客户端失败 '{client_info['module']}': {e}"
+                ) from e
     
     def _auto_register_components(self, app) -> None:
         """自动注册组件（支持依赖注入）"""
@@ -884,11 +877,7 @@ class AutoConfigurationManager:
                     continue
                 
                 # 创建组件实例（支持依赖注入）
-                try:
-                    instance = self._get_class_instance(cls, app)
-                except Exception as e:
-                    logger.error(f"创建组件实例失败 {cls.__name__}: {e}", exc_info=True)
-                    continue
+                instance = self._get_class_instance(cls, app)
                 
                 # 注册到组件注册表
                 app.components[component_name] = instance
@@ -914,6 +903,9 @@ class AutoConfigurationManager:
                 logger.info(f"自动注册组件: '{component_name}' ({component_info['module']}.{cls.__name__})")
             except Exception as e:
                 logger.error(f"自动注册组件失败 {component_info['module']}: {e}", exc_info=True)
+                raise AutoConfigurationError(
+                    f"自动注册组件失败 '{component_info['module']}': {e}"
+                ) from e
     
     def _register_component_jobs(self, app, instance, cls: Type, module_name: str) -> None:
         """

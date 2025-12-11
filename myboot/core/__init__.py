@@ -14,6 +14,7 @@ from .config import (
 )
 from .logger import Logger, get_logger, logger, setup_logging
 from .scheduler import Scheduler, get_scheduler
+from .auto_configuration import AutoConfigurationError
 
 __all__ = [
     "get_settings",
@@ -28,4 +29,5 @@ __all__ = [
     "setup_logging",
     "Scheduler",
     "get_scheduler",
+    "AutoConfigurationError",
 ]
