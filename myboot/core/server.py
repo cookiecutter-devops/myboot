@@ -82,6 +82,10 @@ def _worker_serve(app_path: str, config_dict: dict, worker_id: int, total_worker
     os.environ["MYBOOT_WORKER_COUNT"] = str(total_workers)
     os.environ["MYBOOT_IS_PRIMARY_WORKER"] = "1" if worker_id == 1 else "0"
     
+    # 重新初始化 worker 日志（设置环境变量后才能正确检测多 worker 模式）
+    from .logger import setup_worker_logging
+    setup_worker_logging(worker_id, total_workers)
+    
     try:
         import hypercorn.asyncio
         from hypercorn.config import Config
