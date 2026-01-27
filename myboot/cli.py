@@ -102,17 +102,22 @@ if __name__ == "__main__":
         if template in ['api', 'full']:
             # 创建示例路由
             api_content = '''"""API 路由示例"""
-from myboot.core.application import app
+from myboot.core.decorators import rest_controller, get
 
-@app.get("/")
-def hello():
-    """Hello World 接口"""
-    return {"message": "Hello, MyBoot!", "status": "success"}
 
-@app.get("/health")
-def health():
-    """健康检查接口"""
-    return {"status": "healthy", "service": "running"}
+@rest_controller('/api')
+class HelloController:
+    """Hello 控制器"""
+    
+    @get('/')
+    def hello(self):
+        """Hello World 接口 - GET /api"""
+        return {"message": "Hello, MyBoot!", "status": "success"}
+    
+    @get('/health')
+    def health(self):
+        """健康检查接口 - GET /api/health"""
+        return {"status": "healthy", "service": "running"}
 '''
             routes_file = project_dir / 'app' / 'api' / 'routes.py'
             routes_file.write_text(api_content, encoding='utf-8')

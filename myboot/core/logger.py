@@ -245,7 +245,7 @@ def configure_worker_logger(worker_id: int, total_workers: int) -> None:
     loguru_logger.configure(extra={"worker": worker_info})
 
 
-def setup_worker_logging(worker_id: int, total_workers: int) -> None:
+def setup_worker_logging(worker_id: int, total_workers: int, config: Optional[Union[str, Dynaconf]] = None) -> None:
     """
     为 worker 进程重新初始化日志系统
     
@@ -255,7 +255,14 @@ def setup_worker_logging(worker_id: int, total_workers: int) -> None:
     Args:
         worker_id: Worker 进程 ID (从 1 开始)
         total_workers: 总 worker 数量
+        config: 配置文件路径或配置对象（Dynaconf），如果为 None 则使用默认配置
     """
+    # 获取配置对象
+    config_obj = config if isinstance(config, Dynaconf) else get_settings(config)
+    
+    # 获取日志级别
+    log_level = config_obj.get("logging.level", "INFO").upper()
+    
     # 移除现有的 handler
     loguru_logger.remove()
     
@@ -270,7 +277,7 @@ def setup_worker_logging(worker_id: int, total_workers: int) -> None:
     loguru_logger.add(
         sys.stdout,
         format=log_format,
-        level="DEBUG",  # 使用 DEBUG，让应用配置控制实际级别
+        level=log_level,
         colorize=True,
         backtrace=True,
         diagnose=True,
