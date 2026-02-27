@@ -36,8 +36,9 @@ class ServiceRegistry:
         self.services[service_name] = service_class
         self.service_configs[service_name] = config or {}
         self.dependencies[service_name] = set()
-        self.dependents[service_name] = set()
-        
+        # 不覆盖已有 dependents：可能已有「先注册的依赖方」写入的条目，覆盖会导致拓扑序错误
+        self.dependents.setdefault(service_name, set[str]())
+
         # 分析依赖关系
         self._analyze_dependencies(service_name, service_class)
     
